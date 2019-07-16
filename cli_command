@@ -1,0 +1,193 @@
+#!/bin/bash
+############################################################################################################
+# Script: oci-cli
+# Author: K Leela Krishna | kesavulu.leela.krishna@oracle.com
+# Date  : 15-02-2019
+############################################################################################################
+date
+for profile in `mysql cloudautomation -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 -e "select tenancy_name from tenancy" -N`
+do
+export tenancy_name=$(oci os ns get --profile $profile| jq -r '.data')
+export tenancy_id=$(oci os ns get-metadata -ns $tenancy_name --profile $profile --query 'data."default-s3-compartment-id"' --raw-output )
+oci iam compartment list --all --compartment-id-in-subtree true --profile $profile | jq -r '.data[]|.id,.name,."compartment-id",."description","YES"'|while read compartment_id
+do
+	read compartment_name
+	read parent_compartment_id
+	read compartment_description
+	read is_child_compartment
+	oci compute instance list -c $compartment_id --profile $profile | jq -r '.data[]|."availability-domain",."display-name",.id,."image-id",.region,.shape,."time-created"'|while read availability_domain
+	do
+		read instance_name
+		read instance_id
+		read image_id
+		read region
+		read shape
+		read created
+		oci compute instance list-vnics --instance-id $instance_id --profile $profile | jq -r '.data[]|.id,."private-ip",."public-ip",."subnet-id"'| while read vnic_id
+		do
+			read private_ip
+			read public_ip
+			read subnet_id
+			oci network subnet get --subnet-id $subnet_id --profile $profile | jq -r '.data."vcn-id"' | while read vcn_id
+			do
+				oci network vcn get --vcn-id $vcn_id --profile $profile | jq  -r '.data."display-name",.data."cidr-block"' | while read vcn_name
+				do
+					read cidr_block
+					oci compute image get --image-id $image_id --profile $profile | jq -r '.data."display-name"' | while read image_name
+					do
+								report_date=`date "+%F"`;
+								echo "COMPUTE & VCN & COMPARTMENT Tables Begin......#####################"
+								echo  "report_date	       " : $report_date
+								echo  "tenancy_id	       " : $tenancy_id
+								echo  "instance_id	       " : $instance_id
+								echo  "instance_name	       " : $instance_name
+								echo  "region	               " : $region
+								echo  "availability_domain     " : $availability_domain
+								echo  "shape	               " : $shape
+								echo  "created	               " : $created
+								echo  "vcn_id                  " : $vcn_id
+                                                                echo  "vcn_name                " : $vcn_name
+								echo  "image                   " : $image_name
+								echo  "public_ip               " : $public_ip
+								echo  "private_ip              " : $private_ip
+								echo  "compartment_id          " : $compartment_id
+								echo  "compartment_name        " : $compartment_name
+								echo  "vnic_id                 " : $vnic_id
+								echo  "subnet_id               " : $subnet_id
+								echo  "cidr_block              " : $cidr_block
+								echo  "parent_compartment_id   " : $parent_compartment_id
+                                                                echo  "compartment_description " : $compartment_description
+                                                                echo  "is_child_compartment    " : $is_child_compartment
+								echo "End.......#########################################################"
+						db="cloudautomation"
+						compute="compute"
+						volume="volume"
+						tenancy="tenancy"
+						compartment="compartment"
+						netres="networkresources"
+						mysql -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 $db <<EOF
+						INSERT INTO $compute (\`report_date\`,\`tenancy_id\`,\`instance_id\`,\`instance_name\`,\`region\`,\`availability_domain\`,\`shape\`,\`created\`,\`vcn_id\`,\`vcn_name\`,\`image\`,\`public_ip\`,\`private_ip\`,\`compartment_id\`,\`compartment_name\`,\`vnic_id\`,\`subnet_id\`,\`tag_team\`,\`tag_costcenter\`,\`tag_type\`)
+						values ("$report_date","$tenancy_id","$instance_id","$instance_name","$region","$availability_domain","$shape","$created","$vcn_id","$vcn_name","$image_name","$public_ip","$private_ip","$compartment_id","$compartment_name","$vnic_id","$subnet_id",NULL,NULL,NULL);
+EOF
+
+					done
+				done
+			done
+		done
+	done
+	report_date=`date "+%F"`;	
+	db="cloudautomation"
+	compartment="compartment"
+	mysql -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 $db <<EOF
+	INSERT INTO $compartment (\`report_date\`,\`tenancy_id\`,\`compartment_id\`,\`compartment_name\`,\`compartment_description\`,\`is_child_compartment\`,\`parent_compartment_id\`) values ("$report_date","$tenancy_id","$compartment_id","$compartment_name","$compartment_description","$is_child_compartment","$parent_compartment_id");
+EOF
+done
+done	
+for profile in `mysql cloudautomation -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 -e "select tenancy_name from tenancy" -N`
+do
+        export tenancy_name=$(oci os ns get --profile $profile| jq -r '.data')
+        export tenancy_id=$(oci os ns get-metadata -ns $tenancy_name --profile $profile --query 'data."default-s3-compartment-id"' --raw-output )
+        oci iam compartment list --all --compartment-id-in-subtree true --profile $profile | jq -r '.data[]|.id,.name'|while read compartment_id
+        do
+        read compartment_name
+                oci iam availability-domain list --profile $profile | jq -r '.data[]|.name' |while read availability_domain
+                do
+                        oci bv boot-volume list --availability-domain $availability_domain -c $compartment_id --profile $profile |jq -r '.data[]|.id,"bootVolume",."size-in-gbs"'|while read volume_id
+                        do
+                                read volume_type
+                                read volume_size
+                                oci compute boot-volume-attachment list --profile $profile --availability-domain $availability_domain -c $compartment_id --boot-volume-id $volume_id |jq -r '.data[]|."instance-id",."is-pv-encryption-in-transit-enabled"'|while read instance_id
+                                do
+                                        read encryption_key
+                                        oci compute instance get --instance-id $instance_id --profile $profile | jq -r '.data."display-name"'| while read attached_instance
+                                        do
+						report_date=`date "+%F"`;
+                                                backup_policy="false";
+                                                report_date=`date "+%F"`;
+                                                echo "BOOT Table Begin......#############################################"
+                                                echo  "report_date         " : $report_date
+                                                echo  "tenancy_id          " : $tenancy_id
+                                                echo  "volume_type         " : $volume_type
+                                                echo  "volume_id           " : $volume_id
+                                                echo  "size(GB)            " : $volume_size
+                                                echo  "attached_instance   " : $attached_instance
+                                                echo  "instance_id         " : $instance_id
+                                                echo  "backup_policy       " : $backup_policy
+                                                echo  "encryption_key      " : $encryption_key
+                                                echo "End.......#########################################################"
+                                                db="cloudautomation"
+                                                volume="volume"
+                                                mysql -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 $db <<EOF
+                                                INSERT INTO $volume (\`report_date\`,\`tenancy_id\`,\`volume_type\`,\`volume_id\`,\`size(GB)\`,\`attached_instance\`,\`instance_id\`,\`backup_policy\`,\`encryption_key\`)
+                                                values ("$report_date","$tenancy_id","$volume_type","$volume_id","$volume_size","$attached_instance","$instance_id","$backup_policy","$encryption_key");
+EOF
+                                        done
+                                done
+                        done
+
+                        oci bv volume list --availability-domain $availability_domain -c $compartment_id --profile $profile | jq -r '.data[]|.id,"block",."size-in-gbs"'|while read volume_id
+                        do
+                                read volume_type
+                                read volume_size
+                                oci compute volume-attachment list --profile $profile --availability-domain $availability_domain -c $compartment_id --volume-id $volume_id |jq -r '.data[]|."instance-id",."is-pv-encryption-in-transit-enabled"'|while read instance_id
+                                do
+                                        read encryption_key
+                                        oci compute instance get --instance-id $instance_id --profile $profile | jq -r '.data."display-name"'| while read attached_instance
+                                        do
+						report_date=`date "+%F"`;
+                                                backup_policy="false"
+                                                report_date=`date "+%F"`;
+                                                echo "BLOCK Table Begin......############################################"
+                                                echo  "report_date         " : $report_date
+                                                echo  "tenancy_id          " : $tenancy_id
+                                                echo  "volume_type         " : $volume_type
+                                                echo  "volume_id           " : $volume_id
+                                                echo  "size(GB)            " : $volume_size
+                                                echo  "attached_instance   " : $attached_instance
+                                                echo  "instance_id         " : $instance_id
+                                                echo  "backup_policy       " : $backup_policy
+                                                echo  "encryption_key      " : $encryption_key
+                                                echo "End.......#########################################################"
+                                                db="cloudautomation"
+                                                volume="volume"
+                                                mysql -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 $db <<EOF
+                                                INSERT INTO $volume (\`report_date\`,\`tenancy_id\`,\`volume_type\`,\`volume_id\`,\`size(GB)\`,\`attached_instance\`,\`instance_id\`,\`backup_policy\`,\`encryption_key\`)
+                                                values ("$report_date","$tenancy_id","$volume_type","$volume_id","$volume_size","$attached_instance","$instance_id","$backup_policy","$encryption_key");
+EOF
+                                        done
+                                done
+                        done
+                done
+        done
+done
+
+for profile in `mysql cloudautomation -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 -e "select tenancy_name from tenancy" -N`
+do
+        export tenancy_name=$(oci os ns get --profile $profile| jq -r '.data')
+        export tenancy_id=$(oci os ns get-metadata -ns $tenancy_name --profile $profile --query 'data."default-s3-compartment-id"' --raw-output )
+        oci iam compartment list --all --compartment-id-in-subtree true --profile $profile | jq -r '.data[]|.id,.name'|while read compartment_id
+        do
+        	read compartment_name
+		oci network vcn list -c $compartment_id --profile $profile | jq -r '.data[]|.id,."display-name",."cidr-block"'|while read vcn_id
+		do
+			read vcn_name
+			read cidr_block
+			report_date=`date "+%F"`;
+			echo "VCN Table Begin.......#########################"
+			echo  "report_date         " : $report_date
+			echo  "tenancy_id          " : $tenancy_id
+			echo  "vcn_id              " : $vcn_id
+			echo  "vcn_name            " : $vcn_name
+			echo  "cidr_block          " : $cidr_block
+			echo  "compartment_id      " : $compartment_id
+			echo  "compartment_name    " : $compartment_name
+			echo "End.......#####################################"		
+			db="cloudautomation"
+			vcn="vcn"
+			mysql -uroot -pcde3CDE# -h 192.168.1.3 -P 6603 $db <<EOF
+			INSERT INTO $vcn (\`report_date\`,\`tenancy_id\`,\`vcn_id\`,\`vcn_name\`,\`cidr_block\`,\`compartment_id\`,\`compartment_name\`) values ("$report_date","$tenancy_id","$vcn_id","$vcn_name","$cidr_block","$compartment_id","$compartment_name");
+EOF
+		done
+	done
+done
+date
